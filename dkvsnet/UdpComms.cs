@@ -97,7 +97,6 @@ namespace dkvsnet
         public IPAddress LocalIPAddress()
         {
             IPHostEntry host;
-            string localIP = "";
             host = Dns.GetHostEntry(Dns.GetHostName());
             foreach (IPAddress ip in host.AddressList)
             {
