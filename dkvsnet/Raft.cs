@@ -148,6 +148,7 @@ namespace dkvsnet
             Console.Out.WriteLine("Requesting votes");
             foreach(var node in remoteNodes.Keys)
             {
+                remoteNodes[node].VoteGranted = false;
                 Send(RaftMessageType.RequestVote, node, term.ToString());
             }
         }
