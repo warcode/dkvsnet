@@ -1,20 +1,16 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using ZeroMQ;
-using System.Threading;
-using System.Reactive;
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace dkvsnet
 {
-    class Comms
+    class UdpComms
     {
-        public ZmqContext context;
         private int listenport;
         public BlockingCollection<RaftMessage> incoming;
         private ConcurrentQueue<RaftMessage> inQueue;
@@ -23,7 +19,7 @@ namespace dkvsnet
         public string LocalHost;
 
 
-        public Comms(int port)
+        public UdpComms(int port)
         {
             listenport = port;
             inQueue = new ConcurrentQueue<RaftMessage>();
@@ -34,28 +30,27 @@ namespace dkvsnet
 
         public void StartIncoming()
         {
-            // ZMQ Context, server socket
-            context = ZmqContext.Create();
-            LocalHost = LocalIPAddress() +":"+ listenport;
+            LocalHost = LocalIPAddress().ToString() + ":" + listenport;
 
             Task.Factory.StartNew(() =>
             {
                 string message;
                 try
                 {
-                    ZmqSocket server = context.CreateSocket(ZeroMQ.SocketType.REP);
-                    server.Bind("tcp://"+ LocalHost);
+                    IPEndPoint localEndpoint = new IPEndPoint(LocalIPAddress(), listenport);
+                    IPEndPoint remoteEndpoint = new IPEndPoint(IPAddress.Any, 0);
+
+                    UdpClient server = new UdpClient(localEndpoint);
 
                     Console.Out.WriteLine("I'm listening on " + LocalHost);
 
                     while (true)
                     {
-                        message = server.Receive(Encoding.Unicode);
-                        if (message.Equals("OVER")) { continue; }
+                        message = Encoding.UTF8.GetString(server.Receive(ref remoteEndpoint));
 
                         Console.WriteLine("COM: Got message {0}", message);
                         var dataParts = message.Split('|');
-                        if(dataParts.Count() < 2)
+                        if (dataParts.Count() < 2)
                         {
                             continue;
                         }
@@ -72,8 +67,6 @@ namespace dkvsnet
                         };
 
                         incoming.Add(msg);
-
-                        server.Send("OVER", Encoding.UTF8);
                     }
                 }
                 catch (Exception ex)
@@ -89,18 +82,19 @@ namespace dkvsnet
             {
                 foreach (var message in outgoing.GetConsumingEnumerable())
                 {
-                    using(var client = context.CreateSocket(ZeroMQ.SocketType.REQ))
+                    var destination = message.Destination.Split(':');
+
+                    using (var client = new UdpClient(destination[0], Int32.Parse(destination[1])))
                     {
-                        Console.Out.WriteLine("COM: Sending "+ message.Type +" to " + message.Destination);
-                        client.Connect("tcp://" + message.Destination);
-                        client.Send(((int)message.Type) + "|" + LocalHost + "|" + message.Data, Encoding.Unicode);
-                        var res = client.Receive(Encoding.Unicode);
+                        Console.Out.WriteLine("COM: Sending " + message.Type + " to " + message.Destination);
+                        var messageData = Encoding.UTF8.GetBytes(((int)message.Type) + "|" + LocalHost + "|" + message.Data);
+                        client.Send( messageData, messageData.Length  );
                     }
                 }
             }, TaskCreationOptions.LongRunning);
         }
 
-        public string LocalIPAddress()
+        public IPAddress LocalIPAddress()
         {
             IPHostEntry host;
             string localIP = "";
@@ -109,11 +103,11 @@ namespace dkvsnet
             {
                 if (ip.AddressFamily == AddressFamily.InterNetwork)
                 {
-                    localIP = ip.ToString();
-                    break;
+                    return ip;
                 }
             }
-            return localIP;
+
+            return null;
         }
     }
 }

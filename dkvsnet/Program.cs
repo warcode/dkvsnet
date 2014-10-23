@@ -25,13 +25,14 @@ namespace dkvsnet
             {
                 var localport = args[0];
 
-                var c = new Comms(Int32.Parse(localport));
+                var com = new UdpComms(Int32.Parse(localport));
+                com.StartIncoming();
+                com.StartOutgoing();
 
-                c.StartIncoming();
+                var raft = new Raft(com.LocalHost, @"X:\code\repo\cluster\cluster.cfg", com.incoming, com.outgoing);
+                raft.StartListening();
 
-                var raft = new Raft(c.context, c.LocalHost);
-
-                raft.Start(c.append);
+                
 
                 while (true)
                 {

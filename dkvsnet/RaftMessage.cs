@@ -8,8 +8,16 @@ namespace dkvsnet
 {
     public class RaftMessage
     {
-        public string Type { get; set; }
+        public RaftMessageType Type { get; set; }
         public string Sender { get; set; }
+        public string Destination { get; set; }
         public string Data { get; set; }
+    }
+
+    public enum RaftMessageType
+    {
+        RequestVote,
+        Vote,
+        AppendEntries
     }
 }

@@ -91,6 +91,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Raft.cs" />
     <Compile Include="RaftMessage.cs" />
+    <Compile Include="UdpComms.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
