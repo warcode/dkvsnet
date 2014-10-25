@@ -12,6 +12,7 @@ namespace dkvsnet
         public string Sender { get; set; }
         public string Destination { get; set; }
         public string Data { get; set; }
+        public int Term { get; set; }
     }
 
     public enum RaftMessageType

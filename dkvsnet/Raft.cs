@@ -13,17 +13,26 @@ namespace dkvsnet
     class Raft
     {
         string _host;
+        private Dictionary<string, RaftNode> remoteNodes = new Dictionary<string, RaftNode>();
+        private static RNGCryptoServiceProvider rng = new RNGCryptoServiceProvider();
+
         int heartbeatWaitPeriod = 50;
         int electionWaitPeriod = 150;
         DateTime? electionTimeout;
         DateTime? heartbeatTimeout;
+
         BlockingCollection<RaftMessage> outputQueue;
         BlockingCollection<RaftMessage> inputQueue;
+
+        string leader;
         RaftState state = RaftState.Follower;
         string votedFor = null;
-        private static RNGCryptoServiceProvider rng = new RNGCryptoServiceProvider();
-        private Dictionary<string, RaftNode> remoteNodes = new Dictionary<string, RaftNode>();
-        int term = 0;
+        int currentTerm = 0;
+        List<RaftLogEntry> log = new List<RaftLogEntry>();
+        
+
+        int commitIndex = 0;
+        int lastApplied = 0;
 
 
         public Raft(string nodefile, IComms comms)
@@ -32,14 +41,20 @@ namespace dkvsnet
             outputQueue = comms.StartOutgoing();
             _host = comms.GetLocalHost();
 
+            electionWaitPeriod = 1500 + GetRandomWaitPeriod();
+
+            LoadPresetNodes(nodefile);
+        }
+
+        private int GetRandomWaitPeriod()
+        {
             byte[] randomNumber = new byte[2];
             rng.GetNonZeroBytes(randomNumber);
 
             var number = Math.Abs(BitConverter.ToInt16(randomNumber, 0) % 100);
-            electionWaitPeriod = 1500 + ((int)Math.Floor(1.5 * (number)));
-
-            LoadPresetNodes(nodefile);
+            return ((int)Math.Floor(1.5 * (number)));
         }
+
 
         private void LoadPresetNodes(string location)
         {
@@ -75,19 +90,10 @@ namespace dkvsnet
 
         private void Send(RaftMessageType type, string destination, string data)
         {
-            switch (type)
-            {
-                case RaftMessageType.Vote:
-                    break;
-                case RaftMessageType.RequestVote:
-                    break;
-                case RaftMessageType.AppendEntries:
-                    break;
-            }
-
             var msg = new RaftMessage
             {
                 Type = type,
+                Term = currentTerm,
                 Destination = destination,
                 Data = data
             };
@@ -98,39 +104,47 @@ namespace dkvsnet
 
         private void ProcessMessage(RaftMessage message)
         {
+            //If any message has a bigger term, set term = message.term and become follower
+            if(message.Term > currentTerm)
+            {
+                state = RaftState.Follower;
+                currentTerm = message.Term;
+            }
+
             switch (message.Type)
             {
                 case RaftMessageType.Vote:
-                    VoteReceived(message.Sender);
+                    VoteReceived(message);
                     break;
                 case RaftMessageType.RequestVote:
-                    if (Int32.Parse(message.Data) > term)
-                    {
-                        Vote(message.Sender, message.Data);
-                    }
+                    Vote(message);
                     break;
                 case RaftMessageType.AppendEntries:
-                    AppendEntries();
+                    AppendEntries(message);
                     break;
             }
         }
 
-        private void VoteReceived(string from)
+        private void VoteReceived(RaftMessage message)
         {
-            if (state != RaftState.Leader)
+            if (message.Data == "1")
             {
-                Console.Out.WriteLine("Got vote from " + from);
-
-                remoteNodes[from].VoteGranted = true;
-                //me + others = total / 2 + 1 = quora
-                var votesForMe = 1 + remoteNodes.Values.Where(x => x.VoteGranted).Count();
-                var quoraNeeded = Math.Floor((double)((1 + remoteNodes.Keys.Count())) / 2) + 1;
-
-                Console.Out.WriteLine("I need " + quoraNeeded + " votes. I have " + votesForMe + " votes");
-
-                if (votesForMe >= quoraNeeded)
+                if (state != RaftState.Leader)
                 {
-                    BecomeLeader();
+                    var from = message.Sender;
+                    Console.Out.WriteLine("Got vote from " + from);
+
+                    remoteNodes[from].VoteGranted = true;
+                    //me + others = total / 2 + 1 = quora
+                    var votesForMe = 1 + remoteNodes.Values.Where(x => x.VoteGranted).Count();
+                    var votesNeeded = Math.Floor((double)((1 + remoteNodes.Keys.Count())) / 2) + 1;
+
+                    Console.Out.WriteLine("I need " + votesNeeded + " votes. I have " + votesForMe + " votes");
+
+                    if (votesForMe >= votesNeeded)
+                    {
+                        BecomeLeader();
+                    }
                 }
             }
         }
@@ -141,44 +155,129 @@ namespace dkvsnet
             Console.Out.WriteLine("Becoming candidate");
             //Deal with yourself
             state = RaftState.Candidate;
-            electionTimeout = DateTime.UtcNow.AddMilliseconds(electionWaitPeriod);
-            term = term + 1;
+            currentTerm = currentTerm + 1;
             votedFor = _host;
+
+            electionWaitPeriod = 1500 + GetRandomWaitPeriod();
+            electionTimeout = DateTime.UtcNow.AddMilliseconds(electionWaitPeriod);
 
             Console.Out.WriteLine("Requesting votes");
             foreach(var node in remoteNodes.Keys)
             {
                 remoteNodes[node].VoteGranted = false;
-                Send(RaftMessageType.RequestVote, node, term.ToString());
+                Send(RaftMessageType.RequestVote, node, (lastApplied > 0 ? lastApplied + "-" + log[lastApplied].Term : "0-0"));
             }
         }
 
         private void BecomeLeader()
         {
-            Console.Out.WriteLine("Look at me. LOOK AT ME. I'm da captain now.");
+            Console.Out.WriteLine("I AM THE LEADER");
             state = RaftState.Leader;
             heartbeatWaitPeriod = electionWaitPeriod - 1000;
-            heartbeatTimeout = DateTime.UtcNow.AddMilliseconds(heartbeatWaitPeriod);
+            heartbeatTimeout = DateTime.UtcNow;
+
+            foreach (var node in remoteNodes.Keys)
+            {
+                remoteNodes[node].MatchIndex = 0;
+                remoteNodes[node].NextIndex = commitIndex;
+            }
+
         }
 
-        void AppendEntries()
+        void AppendEntries(RaftMessage message)
         {
-            Console.Out.WriteLine("Yes boss.");
-            state = RaftState.Follower;
-            electionTimeout = DateTime.UtcNow.AddMilliseconds(electionWaitPeriod);
+            //Ignore if message.term < term
+            if(message.Term < currentTerm)
+            {
+                Console.Out.WriteLine("Old term detected. Discarding append entries.");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(message.Data))
+            {
+                Console.Out.WriteLine("FOLLOWING ORDERS");
+                leader = message.Sender;
+                state = RaftState.Follower;
+                votedFor = null;
+                electionTimeout = DateTime.UtcNow.AddMilliseconds(electionWaitPeriod);
+            }
+            else
+            {
+
+                var data = message.Data.Split('-');
+                var prevLogIndex = Int32.Parse(data[0]);
+                var prevLogTerm = Int32.Parse(data[1]);
+                var leaderCommitIndex = Int32.Parse(data[2]);
+
+                //ignore if log doesn't contain an entry at prevLogIndex whos term is equal to prevLogTerm
+                if(log[prevLogIndex] != null)
+                {
+                    if (log[prevLogIndex].Term != prevLogTerm)
+                    {
+                        Console.Out.WriteLine("Incorrect term for previous log entry detected. Discarding append entries.");
+                        return;
+                    }
+                }
+
+                Console.Out.WriteLine("DOING WORK");
+
+                //If entry conflicts, delete entry and following entries
+                /*
+                if (log[RaftLogEntry.Index] != null && log[RaftLogEntry.Index].Term != RaftLogEntry.Term)
+                {
+                    var toBeDeleted = log.Where(x => x.Index >= RaftLogEntry.Index).Select(x => x.Index).ToList();
+                    foreach(var index in toBeDeleted)
+                    {
+                        log[index] = null;
+                    }
+                }
+                */
+
+                //Append all new entries to log
+                /*
+                if(leaderCommitIndex > commitIndex)
+                {
+                    commitIndex = Math.Min(leaderCommitIndex, lastNewEntry);
+                }
+                */
+
+            }
+
+            
+
+
+
         }
 
-        void Vote(string requester,  string data)
+        void Vote(RaftMessage message)
         {
-            Send(RaftMessageType.Vote, requester, data);
-            votedFor = requester;
+            var requester = message.Sender;
+            if(message.Term < currentTerm)
+            {
+                Send(RaftMessageType.Vote, requester, "0");
+                return;
+            }
+
+            var logData = message.Data.Split('-');
+            var lastLogIndex = Int32.Parse(logData[0]);
+            var lastLogTerm = Int32.Parse(logData[1]);
+
+            if (votedFor == null || (lastLogIndex >= lastApplied && (lastApplied == 0 ? true : log[lastApplied].Term >= lastLogTerm)))
+            {
+                
+                Console.Out.WriteLine("I voted for " + requester);
+                votedFor = requester;
+                electionTimeout = DateTime.UtcNow.AddMilliseconds(electionWaitPeriod);
+                Send(RaftMessageType.Vote, requester, "1");
+            }
+
         }
 
         void SendHeartbeat()
         {
             foreach (var node in remoteNodes.Keys)
             {
-                Send(RaftMessageType.AppendEntries, node, term + "|");
+                Send(RaftMessageType.AppendEntries, node, "");
             }
         }
 
@@ -215,5 +314,13 @@ namespace dkvsnet
         public int NextIndex { get; set; }
         public int MatchIndex { get; set; }
         public bool VoteGranted { get; set; }
+    }
+
+    class RaftLogEntry
+    {
+        public int Index {get;set;}
+        public int Term { get; set; }
+        public string Entry { get; set; }
+        public bool Committed { get; set; }
     }
 }

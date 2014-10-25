@@ -17,6 +17,8 @@ namespace dkvsnet
         private ConcurrentQueue<RaftMessage> inQueue;
         private ConcurrentQueue<RaftMessage> outQueue;
         string LocalHost { get;set; }
+        bool inStarted = false;
+        bool outStarted = false;
 
 
         public UdpComms(int port)
@@ -30,6 +32,11 @@ namespace dkvsnet
 
         public BlockingCollection<RaftMessage> StartIncoming()
         {
+            if(inStarted)
+            {
+                throw new Exception("You can only start the comms package input once.");
+            }
+
             LocalHost = LocalIPAddress().ToString() + ":" + listenport;
 
             Task.Factory.StartNew(() =>
@@ -50,18 +57,20 @@ namespace dkvsnet
 
                         Console.WriteLine("COM: Got message {0}", message);
                         var dataParts = message.Split('|');
-                        if (dataParts.Count() < 2)
+                        if (dataParts.Count() < 3)
                         {
                             continue;
                         }
                         var type = (RaftMessageType)Int32.Parse(dataParts[0]);
                         var sender = dataParts[1];
+                        var term = Int32.Parse(dataParts[2]);
 
-                        var data = (dataParts.Count() > 2 ? dataParts[2] : "");
+                        var data = (dataParts.Count() > 3 ? dataParts[3] : "");
 
                         var msg = new RaftMessage
                         {
                             Type = type,
+                            Term = term,
                             Sender = sender,
                             Data = data
                         };
@@ -75,11 +84,18 @@ namespace dkvsnet
                 }
             }, TaskCreationOptions.LongRunning);
 
+            inStarted = true;
+
             return incoming;
         }
 
         public BlockingCollection<RaftMessage> StartOutgoing()
         {
+            if (outStarted)
+            {
+                throw new Exception("You can only start the comms package output once.");
+            }
+
             Task.Factory.StartNew(() =>
             {
                 foreach (var message in outgoing.GetConsumingEnumerable())
@@ -89,11 +105,13 @@ namespace dkvsnet
                     using (var client = new UdpClient(destination[0], Int32.Parse(destination[1])))
                     {
                         Console.Out.WriteLine("COM: Sending " + message.Type + " to " + message.Destination);
-                        var messageData = Encoding.UTF8.GetBytes(((int)message.Type) + "|" + LocalHost + "|" + message.Data);
+                        var messageData = Encoding.UTF8.GetBytes(((int)message.Type) + "|" + LocalHost + "|" + message.Term + "|" + message.Data);
                         client.Send( messageData, messageData.Length  );
                     }
                 }
             }, TaskCreationOptions.LongRunning);
+
+            outStarted = true;
 
             return outgoing;
         }
