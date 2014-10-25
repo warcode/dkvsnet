@@ -9,14 +9,14 @@ using System.Threading.Tasks;
 
 namespace dkvsnet
 {
-    class UdpComms
+    class UdpComms : IComms
     {
         private int listenport;
-        public BlockingCollection<RaftMessage> incoming;
+        public BlockingCollection<RaftMessage> incoming { get; set; }
+        public BlockingCollection<RaftMessage> outgoing { get; set; }
         private ConcurrentQueue<RaftMessage> inQueue;
-        public BlockingCollection<RaftMessage> outgoing;
         private ConcurrentQueue<RaftMessage> outQueue;
-        public string LocalHost;
+        string LocalHost { get;set; }
 
 
         public UdpComms(int port)
@@ -28,7 +28,7 @@ namespace dkvsnet
             outgoing = new BlockingCollection<RaftMessage>(outQueue);
         }
 
-        public void StartIncoming()
+        public BlockingCollection<RaftMessage> StartIncoming()
         {
             LocalHost = LocalIPAddress().ToString() + ":" + listenport;
 
@@ -74,9 +74,11 @@ namespace dkvsnet
                     Console.Out.Write(ex);
                 }
             }, TaskCreationOptions.LongRunning);
+
+            return incoming;
         }
 
-        public void StartOutgoing()
+        public BlockingCollection<RaftMessage> StartOutgoing()
         {
             Task.Factory.StartNew(() =>
             {
@@ -92,6 +94,8 @@ namespace dkvsnet
                     }
                 }
             }, TaskCreationOptions.LongRunning);
+
+            return outgoing;
         }
 
         public IPAddress LocalIPAddress()
@@ -107,6 +111,16 @@ namespace dkvsnet
             }
 
             return null;
+        }
+
+        public string GetLocalHost()
+        {
+            if(string.IsNullOrEmpty(LocalHost))
+            {
+                throw new Exception("You must start the comms package before attempting to get the local host.");
+            }
+
+            return LocalHost;
         }
     }
 }

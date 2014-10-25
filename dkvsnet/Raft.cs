@@ -26,11 +26,11 @@ namespace dkvsnet
         int term = 0;
 
 
-        public Raft(string host, string nodefile, BlockingCollection<RaftMessage> input, BlockingCollection<RaftMessage> output)
+        public Raft(string nodefile, IComms comms)
         {
-            _host = host;
-            inputQueue = input;
-            outputQueue = output;
+            inputQueue = comms.StartIncoming();
+            outputQueue = comms.StartOutgoing();
+            _host = comms.GetLocalHost();
 
             byte[] randomNumber = new byte[2];
             rng.GetNonZeroBytes(randomNumber);
