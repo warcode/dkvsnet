@@ -88,7 +88,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Comms.cs" />
+    <Compile Include="ZmqComms.cs" />
     <Compile Include="IComms.cs" />
     <Compile Include="IStorage.cs" />
     <Compile Include="Program.cs" />

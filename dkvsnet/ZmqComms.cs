@@ -12,7 +12,7 @@ using System.Net.Sockets;
 
 namespace dkvsnet
 {
-    class Comms
+    class ZmqComms
     {
         public ZmqContext context;
         private int listenport;
@@ -23,7 +23,7 @@ namespace dkvsnet
         public string LocalHost;
 
 
-        public Comms(int port)
+        public ZmqComms(int port)
         {
             listenport = port;
             inQueue = new ConcurrentQueue<RaftMessage>();
